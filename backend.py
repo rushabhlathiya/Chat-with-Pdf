@@ -1,5 +1,3 @@
-# pip install -U langchain langchain-openai langchain-community faiss-cpu pypdf python-dotenv langsmith
-
 import os
 import json
 import hashlib
@@ -13,16 +11,37 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.vectorstores import FAISS
+from langchain_core.messages import BaseMessage,AIMessage,HumanMessage,SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
-from langchain_core.output_parsers import StrOutputParser
+from langchain.schema.runnable import RunnableLambda
+from langgraph.graph import StateGraph,START,END
+import sqlite3
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.graph.message import add_messages
+from typing import TypedDict,Annotated
 
 os.environ['HF_HOME'] = 'D:/huggingface_cache'
+
 load_dotenv()
 
 PDF_PATH = "islr.pdf"  # change to your file
 INDEX_ROOT = Path(".indices")
 INDEX_ROOT.mkdir(exist_ok=True)
+
+
+
+class ChatStateSchema(TypedDict):
+    pdf_path: str 
+    chunk_size: int 
+    chunk_overlap: int 
+    embed_model_name: str 
+    force_rebuild: bool
+    context:str
+    message:Annotated[list[BaseMessage],add_messages]
+
+graph = StateGraph(ChatStateSchema)
+model = ChatGoogleGenerativeAI(model = 'gemini-2.0-flash-lite')
+
 
 # ----------------- helpers (traced) -----------------
 @traceable(name="load_pdf")
@@ -73,7 +92,10 @@ def load_index_run(index_dir: Path, embed_model_name: str):
 @traceable(name="build_index", tags=["index"])
 def build_index_run(pdf_path: str, index_dir: Path, chunk_size: int, chunk_overlap: int, embed_model_name: str):
     docs = load_pdf(pdf_path)  # child
+    print("docs",docs)
+    print("chunk_size",chunk_size,"chunk_overlap",chunk_overlap)
     splits = split_documents(docs, chunk_size=chunk_size, chunk_overlap=chunk_overlap)  # child
+    print(splits,embed_model_name)
     vs = build_vectorstore(splits, embed_model_name)  # child
     index_dir.mkdir(parents=True, exist_ok=True)
     vs.save_local(str(index_dir))
@@ -90,7 +112,7 @@ def load_or_build_index(
     pdf_path: str,
     chunk_size: int = 1000,
     chunk_overlap: int = 150,
-    embed_model_name: str = "text-embedding-3-small",
+    embed_model_name: str = "facebook/bart-base",
     force_rebuild: bool = False,
 ):
     key = _index_key(pdf_path, chunk_size, chunk_overlap, embed_model_name)
@@ -100,20 +122,12 @@ def load_or_build_index(
         return load_index_run(index_dir, embed_model_name)
     else:
         return build_index_run(pdf_path, index_dir, chunk_size, chunk_overlap, embed_model_name)
-
-# ----------------- model, prompt, and pipeline -----------------
-llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-lite", temperature=0)
-
-prompt = ChatPromptTemplate.from_messages([
-    ("system", "Answer ONLY from the provided context. If not found, say you don't know."),
-    ("human", "Question: {question}\n\nContext:\n{context}")
-])
-
+    
 def format_docs(docs):
     return "\n\n".join(d.page_content for d in docs)
 
 @traceable(name="setup_pipeline", tags=["setup"])
-def setup_pipeline(pdf_path: str, chunk_size=1000, chunk_overlap=150, embed_model_name="facebook/bart-base", force_rebuild=False):
+def setup_pipeline(pdf_path: str, chunk_size, chunk_overlap, embed_model_name="facebook/bart-base", force_rebuild=False):
     return load_or_build_index(
         pdf_path=pdf_path,
         chunk_size=chunk_size,
@@ -122,32 +136,73 @@ def setup_pipeline(pdf_path: str, chunk_size=1000, chunk_overlap=150, embed_mode
         force_rebuild=force_rebuild,
     )
 
-@traceable(name="pdf_rag_full_run")
-def setup_pipeline_and_query(
-    pdf_path: str,
-    question: str,
-    chunk_size: int = 1000,
-    chunk_overlap: int = 150,
-    embed_model_name: str = "facebook/bart-base",
-    force_rebuild: bool = False,
-):
-    vectorstore = setup_pipeline(pdf_path, chunk_size, chunk_overlap, embed_model_name, force_rebuild)
+@traceable(name="Context Finder")
+def context_finder(state:ChatStateSchema):
+    vectorstore = setup_pipeline(state['pdf_path'], state['chunk_size'], state['chunk_overlap'], state['embed_model_name'], state['force_rebuild'])
     retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+    question = state['message'][-1].content
+    docs =retriever.invoke(question)
+    context = format_docs(docs)
+    return {'context':context}
 
-    parallel = RunnableParallel({
-        "context": retriever | RunnableLambda(format_docs),
-        "question": RunnablePassthrough(),
-    })
-    chain = parallel | prompt | llm | StrOutputParser()
+@traceable(name ='Chat Model')
+def chat(state:ChatStateSchema):
+    message_history = state['message']
+    prompt = ChatPromptTemplate([
+        ('placeholder', "{message_history}"),
+        ('human',"Answer ONLY from the provided context. If not found, say you don't know. Based on the provided content and question\nquestion:{question}\n context:{context}")
+        ])
+    chain = prompt | model
+    result= chain.invoke({'message_history':message_history[:-1],'question':message_history[-1].content,'context':state['context']})
+    return {'message':[result]}
 
-    return chain.invoke(
-        question,
-        config={"run_name": "pdf_rag_query", "tags": ["qa"], "metadata": {"k": 4}}
-    )
 
-# ----------------- CLI -----------------
-if __name__ == "__main__":
-    print("PDF RAG ready. Ask a question (or Ctrl+C to exit).")
-    q = input("\nQ: ").strip()
-    ans = setup_pipeline_and_query(PDF_PATH, q)
-    print("\nA:", ans)
+
+graph.add_node('context_finder',context_finder)
+graph.add_node('chat',chat)
+
+graph.add_edge(START,'context_finder')
+graph.add_edge('context_finder','chat')
+graph.add_edge('chat',END)
+
+# conn =sqlite3.connect(database='chat.db',check_same_thread=False)
+
+# checkpointer = SqliteSaver(conn=conn)
+
+# workflow =graph.compile(checkpointer=checkpointer)
+workflow =graph.compile()
+
+
+# initial_state={
+#     'pdf_path':'islr.pdf',
+#     'chunk_size': 1000,
+#     'chunk_overlap': 150,
+#     'embed_model_name': "facebook/bart-base",
+#     'force_rebuild': False,
+#     'message':[HumanMessage('Who is the writer of this book')],
+# }
+# final_state =workflow.invoke(initial_state)
+
+# print(final_state)
+
+# final_state['message'][-1].content
+# while True:
+#     user_message =input("Chat Here:")
+
+#     print(f'User:{user_message}')
+
+#     if user_message.strip().lower() in ['exit','quit','bye']:
+#         break
+#     initial_state={
+#         'pdf_path':'islr.pdf',
+#         'chunk_size': 1000,
+#         'chunk_overlap': 150,
+#         'embed_model_name': "facebook/bart-base",
+#         'force_rebuild': False,
+#         'message':[HumanMessage(user_message)],
+#         }
+#     result = workflow.invoke(initial_state)
+
+#     print(f'AI:{result['message'][-1].content}')
+# I want you to create a streamlit UI for a chatbot when one asks quetion question as well as asnwer should be displayed like a chat there should be a opition to upload a pdf during chat there should be a side bar with a option of new chat and also showing the old chats each chat should have a feature of rename provide full code 
+# there is a flow in this code there a a pdf upload interface which is on the top after the heading chatbot ui when i type first query it is on top of my first query chat but when i type some thing else like next question it changes it position to so it stays on the top of my latest question
