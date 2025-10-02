@@ -24,7 +24,7 @@ os.environ['HF_HOME'] = 'D:/huggingface_cache'
 
 load_dotenv()
 
-PDF_PATH = "islr.pdf"  # change to your file
+PDF_PATH = "islr.pdf"  
 INDEX_ROOT = Path(".indices")
 INDEX_ROOT.mkdir(exist_ok=True)
 
@@ -43,10 +43,10 @@ graph = StateGraph(ChatStateSchema)
 model = ChatGoogleGenerativeAI(model = 'gemini-2.0-flash-lite')
 
 
-# ----------------- helpers (traced) -----------------
+
 @traceable(name="load_pdf")
 def load_pdf(path: str):
-    return PyPDFLoader(path).load()  # list[Document]
+    return PyPDFLoader(path).load()  
 
 @traceable(name="split_documents")
 def split_documents(docs, chunk_size=1000, chunk_overlap=150):
@@ -60,7 +60,7 @@ def build_vectorstore(splits, embed_model_name: str):
     emb = HuggingFaceEmbeddings(model=embed_model_name)
     return FAISS.from_documents(splits, emb)
 
-# ----------------- cache key / fingerprint -----------------
+
 def _file_fingerprint(path: str) -> dict:
     p = Path(path)
     h = hashlib.sha256()
@@ -79,7 +79,7 @@ def _index_key(pdf_path: str, chunk_size: int, chunk_overlap: int, embed_model_n
     }
     return hashlib.sha256(json.dumps(meta, sort_keys=True).encode("utf-8")).hexdigest()
 
-# ----------------- explicitly traced load/build runs -----------------
+
 @traceable(name="load_index", tags=["index"])
 def load_index_run(index_dir: Path, embed_model_name: str):
     emb = HuggingFaceEmbeddings(model=embed_model_name)
@@ -91,12 +91,12 @@ def load_index_run(index_dir: Path, embed_model_name: str):
 
 @traceable(name="build_index", tags=["index"])
 def build_index_run(pdf_path: str, index_dir: Path, chunk_size: int, chunk_overlap: int, embed_model_name: str):
-    docs = load_pdf(pdf_path)  # child
+    docs = load_pdf(pdf_path)  
     print("docs",docs)
     print("chunk_size",chunk_size,"chunk_overlap",chunk_overlap)
-    splits = split_documents(docs, chunk_size=chunk_size, chunk_overlap=chunk_overlap)  # child
+    splits = split_documents(docs, chunk_size=chunk_size, chunk_overlap=chunk_overlap)  
     print(splits,embed_model_name)
-    vs = build_vectorstore(splits, embed_model_name)  # child
+    vs = build_vectorstore(splits, embed_model_name)  
     index_dir.mkdir(parents=True, exist_ok=True)
     vs.save_local(str(index_dir))
     (index_dir / "meta.json").write_text(json.dumps({
@@ -107,7 +107,7 @@ def build_index_run(pdf_path: str, index_dir: Path, chunk_size: int, chunk_overl
     }, indent=2))
     return vs
 
-# ----------------- dispatcher (not traced) -----------------
+
 def load_or_build_index(
     pdf_path: str,
     chunk_size: int = 1000,
@@ -165,44 +165,38 @@ graph.add_edge(START,'context_finder')
 graph.add_edge('context_finder','chat')
 graph.add_edge('chat',END)
 
-# conn =sqlite3.connect(database='chat.db',check_same_thread=False)
-
-# checkpointer = SqliteSaver(conn=conn)
-
-# workflow =graph.compile(checkpointer=checkpointer)
 workflow =graph.compile()
 
 
-# initial_state={
-#     'pdf_path':'islr.pdf',
-#     'chunk_size': 1000,
-#     'chunk_overlap': 150,
-#     'embed_model_name': "facebook/bart-base",
-#     'force_rebuild': False,
-#     'message':[HumanMessage('Who is the writer of this book')],
-# }
-# final_state =workflow.invoke(initial_state)
 
-# print(final_state)
 
-# final_state['message'][-1].content
-# while True:
-#     user_message =input("Chat Here:")
 
-#     print(f'User:{user_message}')
 
-#     if user_message.strip().lower() in ['exit','quit','bye']:
-#         break
-#     initial_state={
-#         'pdf_path':'islr.pdf',
-#         'chunk_size': 1000,
-#         'chunk_overlap': 150,
-#         'embed_model_name': "facebook/bart-base",
-#         'force_rebuild': False,
-#         'message':[HumanMessage(user_message)],
-#         }
-#     result = workflow.invoke(initial_state)
 
-#     print(f'AI:{result['message'][-1].content}')
-# I want you to create a streamlit UI for a chatbot when one asks quetion question as well as asnwer should be displayed like a chat there should be a opition to upload a pdf during chat there should be a side bar with a option of new chat and also showing the old chats each chat should have a feature of rename provide full code 
-# there is a flow in this code there a a pdf upload interface which is on the top after the heading chatbot ui when i type first query it is on top of my first query chat but when i type some thing else like next question it changes it position to so it stays on the top of my latest question
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

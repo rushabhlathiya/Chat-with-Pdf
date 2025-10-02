@@ -5,7 +5,7 @@ import os
 import uuid
 import json
 
-# Directories for storing data
+
 CHAT_DIR = "chat_sessions"
 PDF_DIR = "uploaded_pdfs"
 os.makedirs(CHAT_DIR, exist_ok=True)
@@ -13,7 +13,7 @@ os.makedirs(PDF_DIR, exist_ok=True)
 
 st.set_page_config(page_title="Chatbot UI", layout="wide")
 
-# ----------- Utility Functions ------------
+
 def load_chats():
     chats = []
     for file in os.listdir(CHAT_DIR):
@@ -40,7 +40,7 @@ def reset_chat():
     st.session_state.chat_data = {
         "name": "New Chat",
         "messages": [],
-        "pdf": None  # This will store PDF file name or path
+        "pdf": None  
     }
     save_chat(new_id, st.session_state.chat_data)
 
@@ -60,7 +60,7 @@ def save_uploaded_pdf(uploaded_file):
         f.write(uploaded_file.getbuffer())
     return file_path
 
-# ----------- Initial Setup (Fix Reload Issue) ------------
+
 if "initialized" not in st.session_state:
     saved_chats = load_chats()
     if saved_chats:
@@ -70,11 +70,11 @@ if "initialized" not in st.session_state:
         reset_chat()
     st.session_state.initialized = True
 
-# Rename tracking
+
 if "rename_chat_id" not in st.session_state:
     st.session_state.rename_chat_id = None
 
-# ----------- Sidebar UI ------------
+
 st.sidebar.title("📁 Chat Sessions")
 
 if st.sidebar.button("➕ New Chat"):
@@ -117,19 +117,19 @@ for chat in chats:
             st.session_state.rename_chat_id = None
             st.rerun()
 
-# ----------- Main Chat UI ------------
+
 
 st.title("💬 Chatbot UI")
 
-# Load current chat data
+
 chat_data = st.session_state.chat_data
 
-# 🟡 Check if PDF is uploaded in this session
+
 if chat_data.get("pdf") is None:
     uploaded_file = st.file_uploader("📄 Upload a PDF to begin chatting", type="pdf")
     if uploaded_file:
         saved_path = save_uploaded_pdf(uploaded_file)
-        chat_data["pdf"] = saved_path  # Save path in chat session
+        chat_data["pdf"] = saved_path  
         st.session_state.chat_data = chat_data
         save_chat(st.session_state.chat_id, chat_data)
         st.success(f"✅ PDF uploaded successfully: {uploaded_file.name}")
@@ -147,7 +147,7 @@ else:
             st.chat_message("assistant").markdown(msg["content"])
 
 
-    # Chat input (enabled only after PDF upload)
+    
     if prompt := st.chat_input("Ask a question"):
         st.chat_message("user").markdown(prompt)
         chat_data["messages"].append({"role": "user", "content": prompt})
@@ -161,11 +161,8 @@ else:
             'force_rebuild': False,
             'message':[HumanMessage(prompt)],
         }
-        # configurable={'configurable':{'thread_id':st.session_state['chat_id']}}
-
+        
         ai_message =workflow.invoke(initial_state)
-
-
 
         st.chat_message("assistant").markdown(ai_message['message'][-1].content)
         chat_data["messages"].append({"role": "assistant", "content": ai_message['message'][-1].content})
