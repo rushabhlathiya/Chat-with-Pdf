@@ -2,7 +2,6 @@ import os
 import json
 import hashlib
 from pathlib import Path
-from dotenv import load_dotenv
 
 from langsmith import traceable
 
@@ -23,7 +22,6 @@ from typing import TypedDict,Annotated
 
 os.environ['HF_HOME'] = 'D:/huggingface_cache'
 
-load_dotenv()
 
 PDF_PATH = "islr.pdf"  # change to your file
 INDEX_ROOT = Path(".indices")
